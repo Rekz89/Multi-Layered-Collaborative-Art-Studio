@@ -1,110 +1,171 @@
-<script type="text/javascript">
-        var gk_isXlsx = false;
-        var gk_xlsxFileLookup = {};
-        var gk_fileData = {};
-        function filledCell(cell) {
-          return cell !== '' && cell != null;
-        }
-        function loadFileData(filename) {
-        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
-            try {
-                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
-                var firstSheetName = workbook.SheetNames[0];
-                var worksheet = workbook.Sheets[firstSheetName];
-
-                // Convert sheet to JSON to filter blank rows
-                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
-                // Filter out blank rows (rows where all cells are empty, null, or undefined)
-                var filteredData = jsonData.filter(row => row.some(filledCell));
-
-                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
-                var headerRowIndex = filteredData.findIndex((row, index) =>
-                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
-                );
-                // Fallback
-                if (headerRowIndex === -1 || headerRowIndex > 25) {
-                  headerRowIndex = 0;
-                }
-
-                // Convert filtered JSON back to CSV
-                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
-                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
-                return csv;
-            } catch (e) {
-                console.error(e);
-                return "";
-            }
-        }
-        return gk_fileData[filename] || "";
-        }
-        </script><!DOCTYPE html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Multi-Layered Collaborative Art Studio</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="script.js" defer></script>
-    <link rel="stylesheet" href="styles.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ArtCollab Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="styles.css">
 </head>
-<body class="bg-gray-100 flex items-center justify-center min-h-screen">
-    <div id="auth" class="bg-white p-6 rounded-lg shadow-lg w-full max-w-md">
-        <h1 class="text-2xl font-bold text-blue-800 mb-4">Join Studio</h1>
-        <input type="text" id="username" placeholder="Username" class="border p-2 w-full mb-2 rounded">
-        <select id="role" class="border p-2 w-full mb-2 rounded">
-            <option value="viewer">Viewer</option>
-            <option value="artist">Artist</option>
-        </select>
-        <button id="join" class="bg-blue-500 text-white px-4 py-2 rounded w-full">Join</button>
+<body class="bg-gray-100 min-h-screen flex flex-col">
+  <header class="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-4 shadow-lg">
+    <div class="container mx-auto flex justify-between items-center">
+      <h1 class="text-2xl font-bold flex items-center">
+        <i class="fas fa-palette mr-3"></i>ArtCollab Studio
+      </h1>
+      <div id="user-info" class="flex items-center">
+        <span id="username-display" class="mr-4 hidden"></span>
+        <span id="currency-display" class="bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full font-bold">
+          $<span id="currency">0</span>
+        </span>
+      </div>
     </div>
-    <div id="canvas-container" class="hidden bg-white p-6 rounded-lg shadow-lg w-full max-w-5xl">
-        <h1 class="text-3xl font-bold text-blue-800 mb-4">Multi-Layered Collaborative Art Studio</h1>
-        <div class="flex flex-col md:flex-row">
-            <div id="canvas-area" class="w-full md:w-2/3 pr-0 md:pr-4">
-                <div id="canvases" class="border-2 border-blue-400"></div>
-                <div id="tools" class="mt-4 flex space-x-2">
-                    <input type="color" id="color-picker" value="#000000" class="w-12 h-10">
-                    <select id="brush-size" class="border p-2 rounded">
-                        <option value="2">2</option>
-                        <option value="5">5</option>
-                        <option value="10">10</option>
-                        <option value="15">15</option>
-                    </select>
-                    <input type="checkbox" id="eraser" class="mr-2"> <label for="eraser">Eraser</label>
-                </div>
-            </div>
-            <div id="sidebar" class="w-full md:w-1/3 pl-0 md:pl-4">
-                <div id="layer-controls" class="mb-4">
-                    <h2 class="text-xl font-semibold text-blue-700">Layers</h2>
-                    <div id="layer-manager"></div>
-                    <button id="add-layer" class="bg-green-500 text-white px-2 py-1 rounded mt-2 mr-2">Add Layer</button>
-                    <button id="delete-layer" class="bg-red-500 text-white px-2 py-1 rounded mt-2">Delete Layer</button>
-                </div>
-                <div class="mb-4">
-                    <h2 class="text-xl font-semibold text-blue-700">Users</h2>
-                    <div id="users-list"></div>
-                </div>
-                <div id="marketplace" class="mb-4">
-                    <h2 class="text-xl font-semibold text-blue-700">Marketplace</h2>
-                    <p>Currency: <span id="currency">100</span></p>
-                    <button id="buy-brush" class="bg-gray-500 text-white px-2 py-1 rounded mt-2 mr-2">Buy Brush (50)</button>
-                    <button id="buy-eraser" class="bg-gray-500 text-white px-2 py-1 rounded mt-2">Buy Eraser (30)</button>
-                    <button id="power-up" class="bg-purple-500 text-white px-2 py-1 rounded mt-2">Power-Up (20)</button>
-                </div>
-                <div id="chat-box" class="mb-4">
-                    <h2 class="text-xl font-semibold text-blue-700">Chat</h2>
-                    <div id="chat-messages" class="border p-2 mb-2 max-h-48 overflow-y-auto"></div>
-                    <input type="text" id="chat-input" class="border p-1 w-full mb-1 rounded" placeholder="Type a message...">
-                    <button id="send-chat" class="bg-blue-500 text-white px-2 py-1 rounded w-full">Send</button>
-                </div>
-                <button id="save-drawing" class="bg-green-500 text-white px-2 py-1 rounded w-full">Save Drawing</button>
-                <button id="leave" class="bg-red-500 text-white px-2 py-1 rounded mt-2 w-full">Leave</button>
-            </div>
+  </header>
+
+  <main class="container mx-auto p-4 flex-grow">
+    <!-- Authentication -->
+    <div id="auth-form" class="max-w-md mx-auto bg-white p-6 rounded-lg shadow-lg">
+      <h2 class="text-2xl font-bold text-gray-800 mb-6">Sign In</h2>
+      <form>
+        <div class="mb-4">
+          <label class="block text-gray-700 mb-2" for="username">Username</label>
+          <input type="text" id="username" class="w-full px-3 py-2 border rounded">
         </div>
-        <div class="mt-4">
-            <button id="undo" class="bg-purple-500 text-white px-2 py-1 rounded mr-2">Undo</button>
-            <button id="redo" class="bg-purple-500 text-white px-2 py-1 rounded">Redo</button>
+        <div class="mb-4">
+          <label class="block text-gray-700 mb-2" for="password">Password</label>
+          <input type="password" id="password" class="w-full px-3 py-2 border rounded">
         </div>
+        <div class="flex justify-between">
+          <button id="login-btn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded">
+            <i class="fas fa-sign-in-alt mr-2"></i>Login
+          </button>
+          <button id="register-btn" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded">
+            <i class="fas fa-user-plus mr-2"></i>Register
+          </button>
+        </div>
+      </form>
+      
+      <div class="mt-6 pt-4 border-t">
+        <h3 class="text-xl font-bold text-gray-800 mb-4">Join as Guest</h3>
+        <form id="guest-form">
+          <div class="mb-4">
+            <label class="block text-gray-700 mb-2" for="guest-name">Display Name</label>
+            <input type="text" id="guest-name" class="w-full px-3 py-2 border rounded">
+          </div>
+          <button id="guest-btn" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded w-full">
+            <i class="fas fa-user-secret mr-2"></i>Join as Guest
+          </button>
+        </form>
+      </div>
     </div>
+
+    <!-- Main App -->
+    <div id="main-app" class="hidden">
+      <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <!-- Canvas Area -->
+        <div class="lg:col-span-3">
+          <div class="bg-white rounded-lg shadow-lg p-4 mb-6">
+            <div class="flex justify-between items-center mb-4">
+              <h2 class="text-xl font-bold text-gray-800">Collaborative Canvas</h2>
+              <div>
+                <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm">
+                  Active Layer: <span id="active-layer-display">base</span>
+                </span>
+              </div>
+            </div>
+            
+            <div id="canvases" class="relative border-2 border-gray-300 rounded-lg bg-white" 
+                 style="width: 100%; height: 500px; overflow: hidden">
+            </div>
+            
+            <div class="mt-4 flex flex-wrap gap-4">
+              <div class="flex items-center">
+                <label class="mr-2">Brush:</label>
+                <input type="color" id="color-picker" value="#000000" class="w-10 h-10">
+              </div>
+              
+              <div class="flex items-center">
+                <label class="mr-2">Size:</label>
+                <input type="range" id="brush-size" min="1" max="50" value="5" class="w-32">
+                <span id="brush-size-display" class="ml-2">5</span>
+              </div>
+              
+              <div class="flex items-center">
+                <label class="mr-2">Type:</label>
+                <select id="brush-type" class="border rounded px-2 py-1">
+                  <option value="round">Round</option>
+                  <option value="square">Square</option>
+                  <option value="butt">Butt</option>
+                </select>
+              </div>
+              
+              <div class="flex items-center">
+                <label class="mr-2">Blend:</label>
+                <select id="blend-mode" class="border rounded px-2 py-1">
+                  <option value="source-over">Normal</option>
+                  <option value="multiply">Multiply</option>
+                  <option value="screen">Screen</option>
+                  <option value="overlay">Overlay</option>
+                  <option value="darken">Darken</option>
+                  <option value="lighten">Lighten</option>
+                </select>
+              </div>
+              
+              <div class="flex items-center">
+                <input type="checkbox" id="eraser" class="mr-2">
+                <label for="eraser">Eraser</label>
+              </div>
+            </div>
+            
+            <div class="mt-4 flex gap-2">
+              <button id="add-layer" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded">
+                <i class="fas fa-plus mr-2"></i>Add Layer
+              </button>
+              <button id="delete-layer" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded">
+                <i class="fas fa-trash mr-2"></i>Delete Layer
+              </button>
+              <button id="save-drawing" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded">
+                <i class="fas fa-save mr-2"></i>Save
+              </button>
+              <button id="leave" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded">
+                <i class="fas fa-sign-out-alt mr-2"></i>Leave
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Sidebar -->
+        <div class="lg:col-span-1 space-y-6">
+          <!-- Layer Manager -->
+          <div class="bg-white rounded-lg shadow-lg p-4">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">
+              <i class="fas fa-layer-group mr-2"></i>Layers
+            </h2>
+            <div id="layer-manager" class="mb-4 max-h-60 overflow-y-auto"></div>
+          </div>
+          
+          <!-- Users List -->
+          <div class="bg-white rounded-lg shadow-lg p-4">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">
+              <i class="fas fa-users mr-2"></i>Collaborators
+            </h2>
+            <div id="users-list" class="space-y-2 max-h-60 overflow-y-auto"></div>
+          </div>
+          
+          <!-- Marketplace -->
+          <div class="bg-white rounded-lg shadow-lg p-4">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">
+              <i class="fas fa-store mr-2"></i>Marketplace
+            </h2>
+            <div id="marketplace-list" class="space-y-4 max-h-96 overflow-y-auto"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="script.js"></script>
 </body>
 </html>
